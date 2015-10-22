@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+declare -a INSTANCES=( )
+
+# Library
+#
+function dbus.populate_instances! {
+	local PID
+	while read; do
+		case "$REPLY" in
+			p*) PID="${REPLY#p}" ;;
+			n*) [[ "$REPLY" =~ ^n@ ]] && INSTANCES+=( "$PID ${REPLY#n@}" ) ;;
+		esac
+	done < <(lsof -a -U -c dbus-daemon +F n)
+}
+
+function dbus.report {
+	case "${#INSTANCES[@]}" in
+		0) : ;;
+		1) echo " * Found a DBus session: ${INSTANCES}" ;;
+		*)
+			echo           ' ! Found multiple DBus sessions, will make use of the last one'
+			dbus.instances '   '
+		;;
+	esac
+}
+
+function dbus.launch_unless_running! {
+	(( "${#INSTANCES[@]}" )) && return
+	eval $(dbus-launch)
+	INSTANCES+=( "$DBUS_SESSION_BUS_PID ${DBUS_SESSION_BUS_ADDRESS%,*}" )
+	echo " * Started a new DBus session: ${INSTANCES}"
+}
+
+function dbus.instances {
+	local INSTANCE
+	for INSTANCE in "${INSTANCES[@]}"; do echo "${1}${INSTANCE}"; done
+}
+
+function dbus.export_socket {
+	local INSTANCE="${INSTANCES[@]: -1}"
+	echo "export DBUS_SESSION_BUS_ADDRESS=unix:abstract=${INSTANCE#* }"
+}
+
+# CLI part
+#
+case "$1" in
+	hop-on|print|get)
+		dbus.populate_instances!
+		dbus.report >&2
+		dbus.launch_unless_running! >&2
+		dbus.export_socket
+	;;
+	en-route|status|instances)
+		dbus.populate_instances!
+		dbus.instances
+		case "${#INSTANCES[@]}" in
+			0) exit 1 ;;
+			1) exit 0 ;;
+			*) exit "${#INSTANCES[@]}" ;;
+		esac
+	;;
+	*)
+		echo 'Usage: see code'
+		exit 1
+	;;
+esac

@@ -5,11 +5,16 @@ declare -a INSTANCES=( )
 # Library
 #
 function dbus.populate_instances! {
-	local PID
+	local PID INSTANCE EXISTING
 	while read; do
 		case "$REPLY" in
 			p*) PID="${REPLY#p}" ;;
-			n*) [[ "$REPLY" =~ ^n@ ]] && INSTANCES+=( "$PID ${REPLY#n@}" ) ;;
+			n*)
+				[[ "$REPLY" =~ ^n@ ]] || continue
+				INSTANCE="$PID ${REPLY#n@}"
+				for EXISTING in "${INSTANCES[@]}"; do [[ "$EXISTING" == "$INSTANCE" ]] && continue 2; done
+				INSTANCES+=( "$INSTANCE" )
+			;;
 		esac
 	done < <(lsof -a -U -c dbus-daemon +F n)
 }

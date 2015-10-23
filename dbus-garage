@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 
-declare -a INSTANCES=( )
+readonly VERSION='1.1.0' # codename friday
 
 # Library
 #
+function dbus.add_instance {
+	local PID SOCKET INSTANCE EXISTING
+	PID="$1"
+	SOCKET="$2"
+	SOCKET="${SOCKET#unix:abstract=}" # drop prefix
+	SOCKET="${SOCKET%,*}"             # drop suffix
+	INSTANCE="$PID $SOCKET"
+	for EXISTING in "${INSTANCES[@]}"; do
+		[[ "$EXISTING" == "$INSTANCE" ]] && return
+	done
+	INSTANCES+=( "$INSTANCE" )
+}
+
 function dbus.populate_instances! {
 	local PID INSTANCE EXISTING
 	while read; do
 		case "$REPLY" in
 			p*) PID="${REPLY#p}" ;;
-			n*)
-				[[ "$REPLY" =~ ^n@ ]] || continue
-				INSTANCE="$PID ${REPLY#n@}"
-				for EXISTING in "${INSTANCES[@]}"; do [[ "$EXISTING" == "$INSTANCE" ]] && continue 2; done
-				INSTANCES+=( "$INSTANCE" )
-			;;
+			n*) [[ "$REPLY" =~ ^n@ ]] && dbus.add_instance "$PID" "${REPLY#n@}" ;;
 		esac
 	done < <(lsof -a -U -c dbus-daemon +F n)
 }
@@ -32,8 +40,8 @@ function dbus.report {
 
 function dbus.launch_unless_running! {
 	(( "${#INSTANCES[@]}" )) && return
-	eval $(dbus-launch)
-	INSTANCES+=( "$DBUS_SESSION_BUS_PID ${DBUS_SESSION_BUS_ADDRESS%,*}" )
+	eval $( env -i "$0" _raw_launch )
+	dbus.add_instance "$DBUS_SESSION_BUS_PID" "$DBUS_SESSION_BUS_ADDRESS"
 	echo " * Started a new DBus session: ${INSTANCES}"
 }
 
@@ -47,9 +55,25 @@ function dbus.export_socket {
 	echo "export DBUS_SESSION_BUS_ADDRESS=unix:abstract=${INSTANCE#* }"
 }
 
-# CLI part
+# Runtime
 #
+declare -a INSTANCES=( )
+
 case "$1" in
+	version)
+		echo "dbus-garage version $VERSION"
+		exit
+	;;
+	_raw_launch)
+		set -a # export everything
+		[[ -r /etc/environment ]] && source /etc/environment
+		[[ -r /etc/default/locale ]] && source /etc/default/locale
+		PATH=/usr/bin:/bin
+		LOGNAME="$( whoami )"
+		HOME="$( getent passwd `id -u` | cut -d: -f 6 )"
+		SHELL="$( getent passwd `id -u` | cut -d: -f 7 )"
+		env -u _ -u PWD -u SHLVL dbus-launch
+	;;
 	hop-on|print|get)
 		dbus.populate_instances!
 		dbus.report >&2
